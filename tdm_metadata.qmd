@@ -1,0 +1,111 @@
+---
+title: "tdm_metadata"
+format: gfm
+---
+
+```{r, setup, echo=FALSE}
+knitr::opts_chunk$set(
+  comment = "#>",
+  collapse = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  echo = TRUE,
+  fig.width = 6,
+  fig.asp = 0.618,
+  out.width = "99%",
+  fig.align = "center",
+  dpi = 300,
+  dev = c("png", "pdf"),
+  fig.path = "fig/"
+)
+options(scipen = 999, digits = 2)
+knitr::knit_hooks$set(
+  inline = function(x) {
+    if (is.numeric(x)) {
+      return(prettyNum(x, big.mark = ","))
+    } else{
+      return(x)
+    }
+  }
+)
+```
+
+```{r deps}
+library(bigrquery)
+library(dplyr)
+library(readr)
+library(DBI)
+```
+
+## Connect to database
+
+```{r BQ connection}
+library(DBI)
+library(bigrquery)
+con <- dbConnect(
+  bigrquery::bigquery(),
+  project = "api-project-764811344545",
+  dataset = "cr_dump_march_20"
+)
+bq_auth()
+```
+
+## Get TDM metadata 
+
+Journal article volume by publisher since 2013 by
+
+- Intended use of full-text link. `text-mining` highlights that a full-text link can be used for text and data mining through the publisher
+- MIME Type of full-text provided by the publisher
+- Open license. Note only the availability of a CC license was checked
+
+```{sql connection=con, output.var="tdm_data"}
+WITH
+  raw AS (
+  SELECT
+    link,
+    publisher,
+    license,
+    EXTRACT ( YEAR
+    FROM
+      issued ) AS cr_year,
+    doi,
+    fulltext_links,
+    CASE
+      WHEN REGEXP_CONTAINS(LOWER(license.url), "creativecommons.org") THEN "CC"
+    ELSE
+    NULL
+  END
+    AS open_license
+  FROM
+    `subugoe-collaborative.cr_instant.snapshot`,
+    UNNEST(link) AS fulltext_links,
+    UNNEST(license) AS license
+  WHERE
+    type = "journal-article" )
+SELECT
+  COUNT(DISTINCT doi) AS n_articles, -- Number of articles
+  publisher, -- Publisher name, be aware of imprints
+  fulltext_links. intended_application, -- Intended use of full-text link
+  fulltext_links.content_type, -- MIME Type, 
+  open_license -- Is there a CC license?
+FROM
+  raw
+WHERE
+  fulltext_links.intended_application IN ("text-mining",
+    "unspecified")
+GROUP BY
+  publisher,
+  fulltext_links.content_type,
+  fulltext_links.intended_application,
+  open_license
+ORDER BY
+  n_articles DESC
+```
+
+Glimpse and back up as csv
+
+```{r backup}
+tdm_data
+
+write_csv(tdm_data, "tdm_md_crossref_journal_articles_since_2013.csv")
+```
